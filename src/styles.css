@@ -1372,3 +1372,36 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 3px s
   .self-checkin-page .button, .self-checkin-page .self-text-button, .public-event-list > a { min-height: 48px; }
   .self-checkin-page button, .self-checkin-page a, .self-checkin-page input { touch-action: manipulation; }
 }
+
+.send-progress { margin: 0 24px 18px; padding: 12px 14px; border: 1px solid #d3e9dc; border-radius: 10px; background: #f6fbf8; display: grid; gap: 8px; }
+.send-progress.paused, .send-progress.stopped { border-color: #ead1c4; background: #fffaf6; }
+.send-progress-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.send-progress-head strong { font-size: 13px; }
+.send-progress-head span { color: var(--muted); font-size: 12px; }
+.send-progress-head .button { margin-left: auto; }
+.send-progress-bar { height: 6px; border-radius: 99px; background: #dfe9e3; overflow: hidden; }
+.send-progress-bar i { display: block; height: 100%; background: var(--accent); transition: width .4s ease; }
+.send-progress > small { color: var(--muted); font-size: 11px; }
+.send-progress .checkin-error { margin: 0; }
+.send-progress-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.send-failures summary { cursor: pointer; font-size: 12px; font-weight: 700; color: #9b3021; }
+.send-failures ul { margin: 8px 0 0; padding: 0; list-style: none; display: grid; gap: 6px; max-height: 220px; overflow: auto; }
+.send-failures li { display: grid; grid-template-columns: minmax(120px, 1fr) minmax(140px, 1fr) 2fr; gap: 8px; font-size: 11px; }
+.send-failures li small { color: var(--muted); }
+.send-mode { margin: 14px 0 0; padding: 0; border: 0; display: grid; gap: 8px; }
+.send-mode legend { font-size: 12px; font-weight: 700; margin-bottom: 6px; }
+.send-mode label { display: flex; gap: 10px; align-items: flex-start; padding: 10px; border: 1px solid var(--line); border-radius: 9px; cursor: pointer; }
+.send-mode label:has(input:checked) { border-color: var(--accent); background: #f1f8f3; }
+.send-mode label:has(input:disabled) { opacity: .5; cursor: not-allowed; }
+.send-mode span { display: grid; gap: 2px; }
+.send-mode strong { font-size: 12px; }
+.send-mode small { color: var(--muted); font-size: 11px; }
+.send-summary { margin: 12px 0 0; display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 8px; }
+.send-summary div { padding: 8px 10px; border-radius: 8px; background: #f4f6f3; }
+.send-summary dt { color: var(--muted); font-size: 10px; }
+.send-summary dd { margin: 2px 0 0; font: 700 16px Manrope, sans-serif; }
+.email-state { display: flex; align-items: center; gap: 3px; margin-top: 3px; font-size: 11px; font-weight: 700; color: var(--accent); }
+.email-state svg { width: 13px; }
+.email-state.failed { color: #9b3021; }
+.email-state.moved, .email-state.sending { color: #9a6a1f; }
+@media (max-width: 720px) { .send-failures li { grid-template-columns: 1fr; gap: 0; } .send-progress-head .button { margin-left: 0; } }

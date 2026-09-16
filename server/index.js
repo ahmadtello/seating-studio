@@ -162,6 +162,8 @@ function normalizePayload(body) {
         attachCalendar: campaign.attachCalendar !== false,
         includeMecQr: Boolean(campaign.includeMecQr),
         preparedAt: cleanText(campaign.preparedAt, 40),
+        deliveries: {},
+        sendJob: null,
         testEmailLog: []
       },
       published: Boolean(workspace.published),
@@ -311,6 +313,9 @@ function preserveServerManagedState(nextData, currentData) {
       workspace.guests = workspace.guests.filter((guest) => !deleted.has(guest.id));
     }
     workspace.campaign.testEmailLog = Array.isArray(currentWorkspace?.campaign?.testEmailLog) ? currentWorkspace.campaign.testEmailLog.slice(-20) : [];
+    // Delivery records belong to the server; a browser save never replaces them.
+    workspace.campaign.deliveries = currentWorkspace?.campaign?.deliveries && typeof currentWorkspace.campaign.deliveries === 'object' ? currentWorkspace.campaign.deliveries : {};
+    workspace.campaign.sendJob = currentWorkspace?.campaign?.sendJob || null;
   }
   return nextData;
 }
@@ -457,7 +462,7 @@ const qrCodeBlock = (imageUrl) => imageUrl
 const applyQrCode = (html, imageUrl) => (imageUrl ? html : html.replace(/<p\b[^>]*>(?:(?!<\/p>)[\s\S])*?\bQR code\b(?:(?!<\/p>)[\s\S])*?<\/p>\s*(?=\{\{qr_code\}\})/gi, ''))
   .split('{{qr_code}}').join(qrCodeBlock(imageUrl));
 
-function renderCampaignEmail(workspace, subject, guest, table, htmlBody = '') {
+function renderCampaignEmail(workspace, subject, guest, table, htmlBody = '', { test = true } = {}) {
   const details = workspace.details || {};
   const safeName = escapeHtml(guest.name || 'Guest');
   const safeEvent = escapeHtml(details.name || 'the event');
@@ -483,8 +488,8 @@ function renderCampaignEmail(workspace, subject, guest, table, htmlBody = '') {
   const customHtml = Object.entries(variables).reduce((html, [key, value]) => html.split(`{{${key}}}`).join(value), customTemplate);
   const customHtmlWithQr = applyQrCode(customHtml, ticketQrUrl(workspace, guest));
   return {
-    subject: `[TEST] ${subject}`,
-    text: `TEST EMAIL\n\nDear ${guest.name || 'Guest'},\n\nWe look forward to welcoming you to ${details.name || 'the event'}.\n\nYour table: ${tableNumber(table) == null ? 'Table preview' : tableTitle(table)} (${table.zone || 'Seating area'})\nDate: ${details.dateLabel || 'To be confirmed'}\nTime: ${details.startTime || 'See event details'}\nVenue: ${details.venue || 'To be confirmed'}\nTicket: ${guest.ticketName || 'Event ticket'}\n\nThis is a test email. No guest campaign has been sent.`,
+    subject: test ? `[TEST] ${subject}` : subject,
+    text: `${test ? 'TEST EMAIL\n\n' : ''}Dear ${guest.name || 'Guest'},\n\nWe look forward to welcoming you to ${details.name || 'the event'}.\n\nYour table: ${tableNumber(table) == null ? 'Table preview' : tableTitle(table)} (${table.zone || 'Seating area'})\nDate: ${details.dateLabel || 'To be confirmed'}\nTime: ${details.startTime || 'See event details'}\nVenue: ${details.venue || 'To be confirmed'}\nTicket: ${guest.ticketName || 'Event ticket'}${test ? '\n\nThis is a test email. No guest campaign has been sent.' : ''}`,
     html: customHtmlWithQr || `<!doctype html><html><body style="margin:0;background:#edf0ec;font-family:Arial,sans-serif;color:#17201b"><table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#edf0ec;padding:24px 12px"><tr><td align="center"><table role="presentation" width="600" cellspacing="0" cellpadding="0" style="width:100%;max-width:600px;background:#fff;border-radius:12px;overflow:hidden"><tr><td style="padding:12px 28px;background:#e8f4ed;color:#176e4c;font-size:12px;font-weight:700;letter-spacing:.08em">TEST EMAIL · NO GUEST CAMPAIGN SENT</td></tr><tr><td style="padding:32px 34px;text-align:center"><div style="font-size:22px;font-weight:800;color:#173e2b">${safeEvent}</div><p style="margin:28px 0 5px;color:#176e4c;font-size:12px;font-weight:700">${safeDate}</p><h1 style="margin:0;font-size:30px;line-height:1.15">Your place is ready.</h1><p style="margin:12px auto 24px;max-width:430px;color:#657068;font-size:15px;line-height:1.6">Dear ${safeName}, we look forward to welcoming you to ${safeEvent}.</p><table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#173e2b;color:#fff;border-radius:10px"><tr><td style="padding:22px;text-align:left"><div style="font-size:11px;letter-spacing:.12em;color:#b7cabe">YOUR TABLE</div><div style="margin:6px 0;font-size:38px;font-weight:800">${safeTable}</div><div style="font-size:13px;color:#d8e3dc">${safeZone}</div></td></tr></table><table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="margin-top:18px"><tr><td style="padding:8px;font-size:12px;color:#657068"><b style="display:block;color:#17201b">Start</b>${safeTime}</td><td style="padding:8px;font-size:12px;color:#657068"><b style="display:block;color:#17201b">Venue</b>${safeVenue}</td><td style="padding:8px;font-size:12px;color:#657068"><b style="display:block;color:#17201b">Ticket</b>${safeTicket}</td></tr></table><p style="margin:24px 0 0;color:#849087;font-size:11px;line-height:1.5">This test uses the current campaign settings. A guest-specific MEC QR will be added only after its live ticket payload is verified.</p></td></tr></table></td></tr></table></body></html>`
   };
 }
@@ -548,7 +553,7 @@ async function sendTransactionalMail(configuration, mail) {
     text: mail.text,
     html: mail.html,
     icalEvent: mail.calendar ? { method: 'PUBLISH', filename: 'event.ics', content: mail.calendar } : undefined,
-    headers: mail.kind === 'self-checkin-code' ? { 'X-Seating-Studio-Self-Check-In': 'verification' } : { 'X-Seating-Studio-Campaign-Test': 'true' },
+    headers: mail.kind === 'self-checkin-code' ? { 'X-Seating-Studio-Self-Check-In': 'verification' } : mail.kind === 'campaign' ? { 'X-Seating-Studio-Campaign': 'guest' } : { 'X-Seating-Studio-Campaign-Test': 'true' },
     disableFileAccess: true,
     disableUrlAccess: true
   });
@@ -590,6 +595,148 @@ const attempts = new Map();
 function loginRateLimit(req, res, next) {
   if (!slidingWindowLimit(attempts, req.ip, { limit: 10, windowMs: 15 * 60 * 1000, maxKeys: 5_000 })) return res.status(429).json({ error: 'Too many attempts' });
   next();
+}
+
+const CAMPAIGN_SEND_INTERVAL_MS = cleanNumber(process.env.CAMPAIGN_SEND_INTERVAL_MS, 0, 60_000, 3000);
+const CAMPAIGN_MAX_CONSECUTIVE_FAILURES = 5;
+const campaignWorkers = new Set();
+const normalizedEmail = (value) => String(value || '').trim().toLowerCase();
+
+// Recipients are seated guests with a valid email. "unsent" covers never-emailed and failed guests;
+// "changed" covers guests already emailed whose table number or address has since changed.
+function campaignAudience(workspace, mode) {
+  const tables = new Map((workspace.tables || []).map((table) => [table.id, table]));
+  const deliveries = workspace.campaign?.deliveries || {};
+  const counts = { seated: 0, unseated: 0, noEmail: 0, sent: 0, failed: 0, unsent: 0, changed: 0 };
+  const unsent = [];
+  const changed = [];
+  for (const guest of workspace.guests || []) {
+    const table = tables.get(guest.tableId);
+    if (!table) { counts.unseated += 1; continue; }
+    counts.seated += 1;
+    const email = normalizedEmail(guest.email);
+    if (!isEmail(email)) { counts.noEmail += 1; continue; }
+    const delivery = deliveries[guest.id];
+    if (delivery?.status === 'sent') {
+      counts.sent += 1;
+      if (delivery.to !== email || delivery.tableNumber !== tableNumberOf(table)) changed.push(guest.id);
+    } else {
+      if (delivery?.status === 'failed') counts.failed += 1;
+      unsent.push(guest.id);
+    }
+  }
+  counts.unsent = unsent.length;
+  counts.changed = changed.length;
+  return { counts, recipients: mode === 'changed' ? changed : mode === 'unsent' ? unsent : [] };
+}
+
+const publicSendJob = (job) => job ? {
+  id: job.id, mode: job.mode, status: job.status, subject: job.template?.subject || '', total: job.total, sent: job.sent, failed: job.failed, skipped: job.skipped,
+  startedAt: job.startedAt, startedBy: job.startedBy, finishedAt: job.finishedAt || '', pauseReason: job.pauseReason || ''
+} : null;
+
+async function runCampaignJob(workspaceId, jobId) {
+  const key = `${workspaceId}:${jobId}`;
+  if (campaignWorkers.has(key)) return;
+  campaignWorkers.add(key);
+  let consecutiveFailures = 0;
+  try {
+    for (;;) {
+      const step = await withDataMutation(async () => {
+        const data = await readData();
+        const workspace = (data.workspaces || []).find((item) => item.id === workspaceId);
+        const job = workspace?.campaign?.sendJob;
+        if (!job || job.id !== jobId || job.status !== 'running') return null;
+        const finish = async (status) => { job.status = status; job.finishedAt = new Date().toISOString(); await writeData(data); return null; };
+        if (job.stopRequested) return finish('stopped');
+        if (job.cursor >= job.recipients.length) return finish('completed');
+        const guestId = job.recipients[job.cursor];
+        job.cursor += 1;
+        const guest = (workspace.guests || []).find((item) => item.id === guestId);
+        const table = guest && (workspace.tables || []).find((item) => item.id === guest.tableId);
+        const email = normalizedEmail(guest?.email);
+        workspace.campaign.deliveries ||= {};
+        const previous = workspace.campaign.deliveries[guestId];
+        // Re-check at send time: the guest may have been unseated, removed or already emailed since the job started.
+        const alreadyCurrent = previous?.status === 'sent' && previous.to === email && table && previous.tableNumber === tableNumberOf(table);
+        if (!guest || !table || !isEmail(email) || alreadyCurrent || previous?.status === 'sending') {
+          job.skipped += 1;
+          await writeData(data);
+          return { skipped: true };
+        }
+        workspace.campaign.deliveries[guestId] = { status: 'sending', to: email, tableNumber: tableNumberOf(table), at: new Date().toISOString(), jobId };
+        await writeData(data);
+        return { workspace: structuredClone({ id: workspace.id, details: workspace.details, tables: workspace.tables }), guest: structuredClone(guest), table: structuredClone(table), email, template: job.template };
+      });
+      if (!step) break;
+      if (step.skipped) continue;
+
+      let outcome;
+      try {
+        const message = renderCampaignEmail(step.workspace, step.template.subject, step.guest, step.table, step.template.htmlBody, { test: false });
+        const info = await sendTransactionalMail(mailConfiguration(), {
+          kind: 'campaign', to: step.email, replyTo: step.template.replyTo,
+          subject: message.subject, text: message.text, html: message.html,
+          calendar: step.template.attachCalendar ? buildCalendarInvite(step.workspace) : '', inlineAssets: message.inlineAssets
+        });
+        outcome = { status: 'sent', messageId: cleanText(info?.messageId, 200) };
+        consecutiveFailures = 0;
+      } catch (error) {
+        console.error(`[seating-api] Campaign email failed: ${error.code || error.name || 'delivery-error'}`);
+        outcome = { status: 'failed', error: error.code === 'MAIL_RELAY_REJECTED' ? 'The mail provider rejected this email.' : 'The email could not be handed to the mail provider.' };
+        consecutiveFailures += 1;
+      }
+
+      const keepGoing = await withDataMutation(async () => {
+        const data = await readData();
+        const workspace = (data.workspaces || []).find((item) => item.id === workspaceId);
+        if (!workspace) return false;
+        workspace.campaign ||= {};
+        workspace.campaign.deliveries ||= {};
+        workspace.campaign.deliveries[step.guest.id] = { ...outcome, to: step.email, tableNumber: tableNumberOf(step.table), at: new Date().toISOString(), jobId };
+        const job = workspace.campaign.sendJob;
+        if (job?.id === jobId) {
+          job[outcome.status === 'sent' ? 'sent' : 'failed'] += 1;
+          if (consecutiveFailures >= CAMPAIGN_MAX_CONSECUTIVE_FAILURES && job.status === 'running') {
+            job.status = 'paused';
+            job.pauseReason = `Paused after ${CAMPAIGN_MAX_CONSECUTIVE_FAILURES} failed emails in a row. Check the mail provider, then send again.`;
+            job.finishedAt = new Date().toISOString();
+          }
+        }
+        await writeData(data);
+        return job?.id === jobId && job.status === 'running';
+      });
+      if (!keepGoing) break;
+      if (CAMPAIGN_SEND_INTERVAL_MS) await new Promise((resolve) => setTimeout(resolve, CAMPAIGN_SEND_INTERVAL_MS));
+    }
+  } catch (error) {
+    console.error(`[seating-api] Campaign job stopped: ${error.name}`);
+  } finally {
+    campaignWorkers.delete(key);
+  }
+}
+
+// A restart interrupts a running job. An email marked "sending" may or may not have left, so it is
+// reported as failed with that caveat, and it is only resent if the organiser sends again.
+async function recoverInterruptedCampaigns() {
+  await withDataMutation(async () => {
+    const data = await readData();
+    let changed = false;
+    for (const workspace of data.workspaces || []) {
+      const campaign = workspace.campaign;
+      if (!campaign) continue;
+      for (const delivery of Object.values(campaign.deliveries || {})) {
+        if (delivery?.status === 'sending') { delivery.status = 'failed'; delivery.error = 'Interrupted by a server restart. It may already have been delivered.'; changed = true; }
+      }
+      if (campaign.sendJob?.status === 'running') {
+        campaign.sendJob.status = 'paused';
+        campaign.sendJob.pauseReason = 'Paused by a server restart. Send again to continue with guests not yet emailed.';
+        campaign.sendJob.finishedAt = new Date().toISOString();
+        changed = true;
+      }
+    }
+    if (changed) await writeData(data);
+  });
 }
 
 const testEmailAttempts = new Map();
@@ -772,6 +919,77 @@ app.post('/api/workspaces/:workspaceId/campaign/test-email', requireAuth, requir
       await writeData(current);
     });
     res.json({ sent: true, to, sentAt, messageId, previewName: delivery.previewName });
+  } catch (error) { next(error); }
+});
+
+app.get('/api/workspaces/:workspaceId/campaign/send-status', requireAuth, requireAdmin, async (req, res, next) => {
+  try {
+    const workspaceId = cleanText(req.params.workspaceId, 100);
+    const workspace = ((await readData()).workspaces || []).find((item) => item.id === workspaceId);
+    if (!workspace) return res.status(404).json({ error: 'Event workspace not found.' });
+    const deliveries = workspace.campaign?.deliveries || {};
+    const guestsById = new Map((workspace.guests || []).map((guest) => [guest.id, guest]));
+    const failures = Object.entries(deliveries).filter(([, delivery]) => delivery?.status === 'failed').slice(0, 500)
+      .map(([guestId, delivery]) => ({ guestId, name: guestsById.get(guestId)?.name || 'Removed guest', to: delivery.to, error: delivery.error || '', at: delivery.at }));
+    res.json({
+      job: publicSendJob(workspace.campaign?.sendJob),
+      counts: campaignAudience(workspace, 'unsent').counts,
+      deliveries: Object.fromEntries(Object.entries(deliveries).map(([guestId, delivery]) => [guestId, { status: delivery.status, at: delivery.at, tableNumber: delivery.tableNumber }])),
+      failures,
+      mailConfigured: mailConfiguration().configured
+    });
+  } catch (error) { next(error); }
+});
+
+app.post('/api/workspaces/:workspaceId/campaign/send', requireAuth, requireAdmin, requireSameOrigin, testEmailRateLimit, async (req, res, next) => {
+  try {
+    const workspaceId = cleanText(req.params.workspaceId, 100);
+    const mode = req.body?.mode === 'changed' ? 'changed' : req.body?.mode === 'unsent' ? 'unsent' : '';
+    const expectedCount = Number(req.body?.expectedCount);
+    const subject = cleanHeader(req.body?.subject, 200).trim();
+    const replyTo = cleanHeader(req.body?.replyTo, 254).trim().toLowerCase();
+    const htmlBody = sanitizeEmailHtml(req.body?.htmlBody).trim();
+    if (!/^[a-zA-Z0-9-]+$/.test(workspaceId) || !mode || !Number.isInteger(expectedCount) || !subject || !htmlBody || (replyTo && !isEmail(replyTo))) return res.status(400).json({ error: 'A subject, email body, valid reply-to address and recipient group are required.' });
+    if (req.body?.confirmation !== 'SEND') return res.status(400).json({ error: 'Type SEND to confirm.' });
+    if (!mailConfiguration().configured) return res.status(503).json({ error: 'Email delivery is not configured on the server yet.' });
+    const result = await withDataMutation(async () => {
+      const data = await readData();
+      const workspace = (data.workspaces || []).find((item) => item.id === workspaceId);
+      if (!workspace) return { status: 404, error: 'Event workspace not found.' };
+      if (workspace.campaign?.sendJob?.status === 'running') return { status: 409, error: 'Emails are already being sent for this event.' };
+      const { recipients } = campaignAudience(workspace, mode);
+      if (!recipients.length) return { status: 400, error: 'There are no guests to email in this group.' };
+      if (recipients.length !== expectedCount) return { status: 409, error: `The guest list changed: ${recipients.length} guests would now receive this email. Review the numbers and confirm again.`, count: recipients.length };
+      workspace.campaign ||= {};
+      const attachCalendar = req.body?.attachCalendar !== false;
+      Object.assign(workspace.campaign, { subject, replyTo, htmlBody, attachCalendar });
+      workspace.campaign.sendJob = {
+        id: randomBytes(8).toString('hex'), mode, status: 'running', recipients, cursor: 0, total: recipients.length, sent: 0, failed: 0, skipped: 0,
+        startedAt: new Date().toISOString(), startedBy: req.seatingUser.username, template: { subject, replyTo, htmlBody, attachCalendar }
+      };
+      await writeData(data);
+      return { job: workspace.campaign.sendJob };
+    });
+    if (result.error) return res.status(result.status).json({ error: result.error, count: result.count });
+    runCampaignJob(workspaceId, result.job.id);
+    res.status(202).json({ job: publicSendJob(result.job) });
+  } catch (error) { next(error); }
+});
+
+app.post('/api/workspaces/:workspaceId/campaign/send/stop', requireAuth, requireAdmin, requireSameOrigin, async (req, res, next) => {
+  try {
+    const workspaceId = cleanText(req.params.workspaceId, 100);
+    const job = await withDataMutation(async () => {
+      const data = await readData();
+      const workspace = (data.workspaces || []).find((item) => item.id === workspaceId);
+      const current = workspace?.campaign?.sendJob;
+      if (!current || current.status !== 'running') return current || null;
+      current.stopRequested = true;
+      await writeData(data);
+      return current;
+    });
+    if (!job) return res.status(404).json({ error: 'No email send has been started.' });
+    res.json({ job: publicSendJob(job) });
   } catch (error) { next(error); }
 });
 
@@ -1160,6 +1378,7 @@ app.use((error, _req, res, _next) => {
   res.status(500).json({ error: 'Internal server error' });
 });
 
+await recoverInterruptedCampaigns();
 const server = app.listen(port, '127.0.0.1', () => console.log(`Seating API listening on 127.0.0.1:${port}`));
 server.requestTimeout = 15_000;
 server.headersTimeout = 20_000;

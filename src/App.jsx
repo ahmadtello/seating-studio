@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { applySeatingConfig, mergeConfirmedGuests, membershipLabel } from './seating-config.js';
 import { activeMemberships, normalizeSeatingRules, smartAutoAssign } from './smart-seating.js';
 import { markManualEventFields, mergeMecEventDetails } from './event-details.js';
@@ -1295,6 +1295,15 @@ function GuestsView({ workspaceId, guests, setGuests, tables, fileRef, onSync, s
   const [pageSize, setPageSize] = useState('25');
   const [selectedGuest, setSelectedGuest] = useState(null);
   const [selectedIds, setSelectedIds] = useState(() => new Set());
+  const [deliveries, setDeliveries] = useState({});
+  useEffect(() => {
+    let active = true;
+    fetch(`/api/workspaces/${encodeURIComponent(workspaceId)}/campaign/send-status`, { headers: { Accept: 'application/json' } })
+      .then((response) => response.ok ? response.json() : null)
+      .then((data) => { if (active && data?.deliveries) setDeliveries(data.deliveries); })
+      .catch(() => {});
+    return () => { active = false; };
+  }, [workspaceId]);
   const [manualGuestOpen, setManualGuestOpen] = useState(false);
   const [manualGuest, setManualGuest] = useState(newManualGuest);
   const [manualGuestState, setManualGuestState] = useState({ status: 'idle', message: '' });
@@ -1394,7 +1403,13 @@ function GuestsView({ workspaceId, guests, setGuests, tables, fileRef, onSync, s
               <td>{guest.company}</td><td>{guest.title}</td>
               <td><span className={`membership-badge ${guest.bookingMembership?.status === 'active' ? 'active' : ''}`}>{membershipLabel(guest)}</span></td>
               <td>{table ? <span className="table-badge">{tableAdminTitle(table)}</span> : <span className="warning-text">Unseated</span>}</td>
-              <td><span className={`ticket-state ${guest.bookingId ? '' : 'muted'}`}><QrCode24Regular /> {guest.bookingId ? 'MEC booking linked' : guest.source === 'manual' ? 'Manual guest' : 'Needs booking ID'}</span></td><td><div className="guest-row-actions"><IconButton label={guest.vip ? `Remove VIP from ${guest.name}` : `Mark ${guest.name} as VIP`} className={guest.vip ? 'vip-toggle active' : 'vip-toggle'} onClick={() => setGuests((current) => current.map((item) => item.id === guest.id ? { ...item, vip: !item.vip } : item))}>{guest.vip ? <Star24Filled /> : <Star24Regular />}</IconButton><IconButton label={`Edit ${guest.name}`} onClick={() => setSelectedGuest({ ...guest })}><MoreHorizontal24Regular /></IconButton>{guest.source === 'manual' && <IconButton label={`Delete ${guest.name}`} className="guest-delete" onClick={() => openDelete(guest)}><Delete24Regular /></IconButton>}</div></td>
+              <td><span className={`ticket-state ${guest.bookingId ? '' : 'muted'}`}><QrCode24Regular /> {guest.bookingId ? 'MEC booking linked' : guest.source === 'manual' ? 'Manual guest' : 'Needs booking ID'}</span>{(() => {
+                const delivery = deliveries[guest.id];
+                if (!delivery) return null;
+                const moved = delivery.status === 'sent' && table && String(tableNumber(table)) !== delivery.tableNumber;
+                const label = delivery.status === 'sent' ? (moved ? `Emailed table ${delivery.tableNumber} · moved since` : `Emailed ${new Date(delivery.at).toLocaleDateString()}`) : delivery.status === 'sending' ? 'Email sending…' : 'Email failed';
+                return <span className={`email-state ${delivery.status}${moved ? ' moved' : ''}`}><Mail24Regular /> {label}</span>;
+              })()}</td><td><div className="guest-row-actions"><IconButton label={guest.vip ? `Remove VIP from ${guest.name}` : `Mark ${guest.name} as VIP`} className={guest.vip ? 'vip-toggle active' : 'vip-toggle'} onClick={() => setGuests((current) => current.map((item) => item.id === guest.id ? { ...item, vip: !item.vip } : item))}>{guest.vip ? <Star24Filled /> : <Star24Regular />}</IconButton><IconButton label={`Edit ${guest.name}`} onClick={() => setSelectedGuest({ ...guest })}><MoreHorizontal24Regular /></IconButton>{guest.source === 'manual' && <IconButton label={`Delete ${guest.name}`} className="guest-delete" onClick={() => openDelete(guest)}><Delete24Regular /></IconButton>}</div></td>
             </tr>;
           })}</tbody>
         </table>
@@ -1582,6 +1597,11 @@ function MessagesView({ workspaceId, guests, tables, setView, eventDetails, camp
   const previewGuest = assigned.find((guest) => guest.qrToken || guest.invoiceKey || guest.transactionId) || assigned[0] || null;
   const previewTable = previewGuest ? tables.find((table) => table.id === previewGuest.tableId) : null;
   const [sent, setSent] = useState(false);
+  const [sendInfo, setSendInfo] = useState(null);
+  const [sendOpen, setSendOpen] = useState(false);
+  const [sendMode, setSendMode] = useState('unsent');
+  const [sendConfirm, setSendConfirm] = useState('');
+  const [sendState, setSendState] = useState({ status: 'idle', message: '' });
   const [previewMode, setPreviewMode] = useState('desktop');
   const [integrationOpen, setIntegrationOpen] = useState(false);
   const [ticketOpen, setTicketOpen] = useState(false);
@@ -1620,6 +1640,41 @@ function MessagesView({ workspaceId, guests, tables, setView, eventDetails, camp
       if (!response.ok) throw new Error(data.error || 'Mail status could not be checked.');
       setMailState({ status: data.configured ? 'ready' : 'missing', configured: Boolean(data.configured), provider: data.provider || 'SMTP', fromAddress: data.fromAddress || '', error: '' });
     } catch (error) { setMailState({ status: 'error', configured: false, provider: 'SMTP', fromAddress: '', error: error.message }); }
+  };
+  const loadSendStatus = useCallback(async () => {
+    try {
+      const response = await fetch(`/api/workspaces/${encodeURIComponent(workspaceId)}/campaign/send-status`, { headers: { Accept: 'application/json' } });
+      if (response.ok) setSendInfo(await response.json());
+    } catch {}
+  }, [workspaceId]);
+  const sendRunning = sendInfo?.job?.status === 'running';
+  useEffect(() => {
+    loadSendStatus();
+    if (!sendRunning) return undefined;
+    const timer = setInterval(loadSendStatus, 3000);
+    return () => clearInterval(timer);
+  }, [loadSendStatus, sendRunning]);
+  const sendCounts = sendInfo?.counts || { seated: 0, unseated: 0, noEmail: 0, sent: 0, failed: 0, unsent: 0, changed: 0 };
+  const sendCount = sendMode === 'changed' ? sendCounts.changed : sendCounts.unsent;
+  const openSend = (mode) => { setSendMode(mode); setSendConfirm(''); setSendState({ status: 'idle', message: '' }); loadSendStatus(); setSendOpen(true); };
+  const startSend = async () => {
+    setSendState({ status: 'sending', message: '' });
+    try {
+      const response = await fetch(`/api/workspaces/${encodeURIComponent(workspaceId)}/campaign/send`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Seating-Request': '1' },
+        body: JSON.stringify({ mode: sendMode, expectedCount: sendCount, confirmation: sendConfirm.trim(), subject: campaignDraft.subject, replyTo: campaignDraft.replyTo, htmlBody: campaignDraft.htmlBody, attachCalendar: campaignDraft.attachCalendar })
+      });
+      const data = await response.json().catch(() => ({}));
+      if (!response.ok) { await loadSendStatus(); throw new Error(data.error || 'The emails could not be started.'); }
+      onCampaignChange({ ...campaignDraft, preparedAt: new Date().toISOString() });
+      setSendOpen(false);
+      await loadSendStatus();
+    } catch (error) { setSendState({ status: 'error', message: error.message }); }
+  };
+  const stopSend = async () => {
+    await fetch(`/api/workspaces/${encodeURIComponent(workspaceId)}/campaign/send/stop`, { method: 'POST', headers: { 'X-Seating-Request': '1' } }).catch(() => {});
+    loadSendStatus();
   };
   const sendTestEmail = async () => {
     setTestState({ status: 'sending', message: '' });
@@ -1676,7 +1731,22 @@ function MessagesView({ workspaceId, guests, tables, setView, eventDetails, camp
           </div>
           <label className="toggle-line"><input type="checkbox" checked={campaignDraft.attachCalendar} onChange={(event) => updateCampaignDraft({ attachCalendar: event.target.checked })} /><i /><span><strong>Attach calendar invitation</strong><small>Includes venue and arrival time</small></span></label>
         </div>
-        <div className="send-bar"><div><span>Recipients</span><strong>{ready.length}</strong></div><div className="send-actions"><button className="button secondary" onClick={() => { setTestRecipient((current) => current || campaignDraft.replyTo); setTestState({ status: 'idle', message: '' }); setTestEmailOpen(true); }}><Mail24Regular /> Send test email</button><button className="button primary" onClick={() => { onCampaignChange({ ...campaignDraft, preparedAt: new Date().toISOString() }); setSent(true); }} disabled={!campaignDraft.subject.trim() || !EMAIL_PATTERN.test(campaignDraft.replyTo.trim()) || !campaignDraft.htmlBody.trim()}><Send24Regular /> {sent ? 'Draft saved' : 'Save draft'}</button></div></div>
+        <div className="send-bar"><div><span>Recipients</span><strong>{sendInfo ? sendCounts.seated - sendCounts.noEmail : ready.length}</strong></div><div className="send-actions"><button className="button secondary" onClick={() => { setTestRecipient((current) => current || campaignDraft.replyTo); setTestState({ status: 'idle', message: '' }); setTestEmailOpen(true); }}><Mail24Regular /> Send test email</button><button className="button secondary" onClick={() => { onCampaignChange({ ...campaignDraft, preparedAt: new Date().toISOString() }); setSent(true); }} disabled={!campaignDraft.subject.trim() || !EMAIL_PATTERN.test(campaignDraft.replyTo.trim()) || !campaignDraft.htmlBody.trim()}>{sent ? 'Draft saved' : 'Save draft'}</button><button className="button primary" onClick={() => openSend(sendCounts.unsent === 0 && sendCounts.changed > 0 ? 'changed' : 'unsent')} disabled={sendRunning || !campaignDraft.subject.trim() || !EMAIL_PATTERN.test(campaignDraft.replyTo.trim()) || !campaignDraft.htmlBody.trim()}><Send24Regular /> Send to guests</button></div></div>
+        {sendInfo?.job && <div className={`send-progress ${sendInfo.job.status}`} role="status" aria-live="polite">
+          <div className="send-progress-head">
+            <strong>{sendInfo.job.status === 'running' ? 'Sending guest emails…' : sendInfo.job.status === 'completed' ? 'Guest emails sent' : sendInfo.job.status === 'stopped' ? 'Sending stopped' : 'Sending paused'}</strong>
+            <span>{sendInfo.job.sent} sent · {sendInfo.job.failed} failed · {Math.max(0, sendInfo.job.total - sendInfo.job.sent - sendInfo.job.failed - sendInfo.job.skipped)} remaining of {sendInfo.job.total}</span>
+            {sendRunning && <button className="button secondary" onClick={stopSend}>Stop sending</button>}
+          </div>
+          <div className="send-progress-bar"><i style={{ width: `${sendInfo.job.total ? Math.round(((sendInfo.job.sent + sendInfo.job.failed + sendInfo.job.skipped) / sendInfo.job.total) * 100) : 0}%` }} /></div>
+          <small>Started {new Date(sendInfo.job.startedAt).toLocaleString()} by {sendInfo.job.startedBy}{sendInfo.job.skipped ? ` · ${sendInfo.job.skipped} skipped because they were unseated or already emailed` : ''}</small>
+          {sendInfo.job.pauseReason && <div className="checkin-error test-email-note"><Alert24Regular />{sendInfo.job.pauseReason}</div>}
+          {!sendRunning && (sendCounts.unsent > 0 || sendCounts.changed > 0) && <div className="send-progress-actions">
+            {sendCounts.unsent > 0 && <button className="button secondary" onClick={() => openSend('unsent')}><Send24Regular /> Send to {sendCounts.unsent} not yet emailed{sendCounts.failed ? ` (includes ${sendCounts.failed} failed)` : ''}</button>}
+            {sendCounts.changed > 0 && <button className="button secondary" onClick={() => openSend('changed')}><Send24Regular /> Send updated email to {sendCounts.changed} moved {sendCounts.changed === 1 ? 'guest' : 'guests'}</button>}
+          </div>}
+          {sendInfo.failures?.length > 0 && <details className="send-failures"><summary>{sendInfo.failures.length} failed {sendInfo.failures.length === 1 ? 'email' : 'emails'}</summary><ul>{sendInfo.failures.map((failure) => <li key={failure.guestId}><strong>{failure.name}</strong><span>{failure.to}</span><small>{failure.error}</small></li>)}</ul></details>}
+        </div>}
         {sent && <div className="success-note"><Checkmark24Regular /> Subject, HTML body and delivery settings saved for this event.</div>}
       </section>
       <aside className="email-preview-panel">
@@ -1690,6 +1760,23 @@ function MessagesView({ workspaceId, guests, tables, setView, eventDetails, camp
         <div className="integration-status"><span className={mecState.status}></span><div><strong>{mecState.status === 'connected' ? 'Connected securely' : mecState.status === 'checking' ? 'Checking connection' : 'Connection failed'}</strong><small>{mecState.status === 'connected' ? 'MEC REST API' : mecState.error}</small></div></div>
         <label className="modal-field"><span>MEC event</span><select value={mecEventId} onChange={(event) => setMecEventId(event.target.value)} disabled={!mecState.events.length}><option value="">Select an event</option>{mecState.events.map((event) => <option key={event.id} value={event.id}>{event.title}</option>)}</select><small>The selected event is saved for this workspace.</small></label>
         <div className="security-note">Ticket-type data can be read through this connection. Guest-specific QR codes require the MEC booking or invoice identifier for each attendee.</div>
+      </Modal>}
+      {sendOpen && <Modal title="Send email to guests" subtitle="Each guest receives their own email with their first name, table number and personal QR code." onClose={() => setSendOpen(false)} actions={<><button className="button secondary" onClick={() => setSendOpen(false)}>Cancel</button><button className="button primary" onClick={startSend} disabled={sendState.status === 'sending' || sendConfirm.trim() !== 'SEND' || !sendCount || !sendInfo?.mailConfigured}><Send24Regular />{sendState.status === 'sending' ? 'Starting…' : `Send ${sendCount} ${sendCount === 1 ? 'email' : 'emails'}`}</button></>}>
+        <div className="integration-status"><span className={sendInfo?.mailConfigured ? 'connected' : 'error'}></span><div><strong>{sendInfo?.mailConfigured ? 'Mail delivery connected' : 'Mail delivery is not configured'}</strong><small>{mailState.configured ? `${mailState.provider} · ${mailState.fromAddress}` : 'Emails cannot be sent until the server mail provider is configured.'}</small></div></div>
+        <fieldset className="send-mode">
+          <legend>Who receives this email</legend>
+          <label><input type="radio" name="send-mode" checked={sendMode === 'unsent'} onChange={() => { setSendMode('unsent'); setSendState({ status: 'idle', message: '' }); }} /><span><strong>Seated guests not emailed yet · {sendCounts.unsent}</strong><small>{sendCounts.failed ? `Includes ${sendCounts.failed} whose earlier email failed. ` : ''}Guests who already received this email are skipped.</small></span></label>
+          <label><input type="radio" name="send-mode" checked={sendMode === 'changed'} onChange={() => { setSendMode('changed'); setSendState({ status: 'idle', message: '' }); }} disabled={!sendCounts.changed} /><span><strong>Guests moved to another table since their email · {sendCounts.changed}</strong><small>Sends the current email again with their new table number.</small></span></label>
+        </fieldset>
+        <dl className="send-summary">
+          <div><dt>Seated guests</dt><dd>{sendCounts.seated}</dd></div>
+          <div><dt>Already emailed</dt><dd>{sendCounts.sent}</dd></div>
+          <div><dt>Not seated (not emailed)</dt><dd>{sendCounts.unseated}</dd></div>
+          <div><dt>Seated without an email</dt><dd>{sendCounts.noEmail}</dd></div>
+        </dl>
+        <div className="security-note"><strong>Subject:</strong> {campaignDraft.subject}<br /><strong>Reply-to:</strong> {campaignDraft.replyTo}{campaignDraft.attachCalendar ? ' · calendar invitation attached' : ''}<br />Emails go out one at a time, about {Math.max(1, Math.ceil((sendCount * 3) / 60))} {Math.ceil((sendCount * 3) / 60) === 1 ? 'minute' : 'minutes'} in total. You can close this page while it runs and stop it at any time.</div>
+        <label className="modal-field"><span>Type SEND to confirm</span><input value={sendConfirm} onChange={(event) => setSendConfirm(event.target.value.slice(0, 10))} autoComplete="off" placeholder="SEND" /><small>This sends real emails to {sendCount} {sendCount === 1 ? 'guest' : 'guests'}. It cannot be undone.</small></label>
+        {sendState.message && <div className="checkin-error test-email-note" role="alert"><Alert24Regular />{sendState.message}</div>}
       </Modal>}
       {testEmailOpen && <Modal title="Send test email" subtitle="Send the current preview to one address. No guest campaign will be started." onClose={() => setTestEmailOpen(false)} actions={<><button className="button secondary" onClick={() => setTestEmailOpen(false)}>{testState.status === 'sent' ? 'Done' : 'Cancel'}</button>{testState.status !== 'sent' && <button className="button primary" onClick={sendTestEmail} disabled={!mailState.configured || testState.status === 'sending' || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(testRecipient)}><Mail24Regular />{testState.status === 'sending' ? 'Sending…' : 'Send test'}</button>}</>}>
         <div className="integration-status"><span className={mailState.status === 'ready' ? 'connected' : 'error'}></span><div><strong>{mailState.configured ? 'Mail delivery connected' : 'Mail delivery is not configured'}</strong><small>{mailState.configured ? `${mailState.provider} · ${mailState.fromAddress}` : 'A protected mail provider must be configured on the server.'}</small></div></div>

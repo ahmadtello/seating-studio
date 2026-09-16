@@ -47,6 +47,9 @@ Built for ticketed events sold through WordPress, Modern Events Calendar (MEC) a
 - **Personal variables**, including table number and a check-in QR code per guest.
 - **Guests without a QR code** are told to give their name or email at registration instead.
 - **Test emails** through a signed WordPress mail relay or SMTP, with an audit log.
+- **Send to guests**: one email per seated guest with their own name, table number and QR code. Unseated guests are never emailed.
+- **Safe bulk sending**: a typed SEND confirmation, paced delivery on the server, live progress, stop at any time, and no duplicates. Failed guests can be sent again, and guests moved to another table can get an updated email.
+- **Delivery status** per guest in the guest directory.
 - **Calendar invite** (`.ics`) attached on request.
 
 </td>
@@ -190,6 +193,7 @@ Without MEC settings, you can still add guests by hand, plan seating, export and
 | `WORDPRESS_MAIL_RELAY_SECRET` | ✉️ | | Shared relay secret. At least 32 characters. |
 | `EMAIL_FROM_ADDRESS` | ✉️ | | Verified sender address. |
 | `EMAIL_FROM_NAME` | | `Event Team` | Sender name. |
+| `CAMPAIGN_SEND_INTERVAL_MS` | | `3000` | Pause between guest emails, to stay within your mail provider's sending limits. |
 | `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASS`, `SMTP_SECURE`, `SMTP_REQUIRE_TLS` | | | Direct SMTP. Used only when the relay isn't configured. |
 
 🎟️ Needed for MEC booking sync and QR codes. ✉️ Needed for email: configure either the relay or SMTP.
@@ -247,6 +251,7 @@ npm run test:auth
 npm run test:self-checkin
 node tests/guest-delete.integration.mjs
 node tests/save-conflict.integration.mjs
+node tests/guest-send.integration.mjs
 node tests/ticket-qr.integration.mjs
 
 # Live ticket lookup against your WordPress site (skipped unless enabled)

@@ -30,7 +30,7 @@ function seating_studio_relay_inline_assets($requested, $kind) {
     if (!is_array($requested)) {
         return array();
     }
-    if ($kind !== 'campaign-test' || count($requested) > 2) {
+    if (!in_array($kind, array('campaign-test', 'campaign'), true) || count($requested) > 2) {
         return seating_studio_relay_error('invalid_payload', 'Invalid inline assets.', 400);
     }
 
@@ -87,7 +87,7 @@ function seating_studio_relay_send(WP_REST_Request $request) {
 
     $payload = $request->get_json_params();
     $kind = is_array($payload) ? (string) ($payload['kind'] ?? '') : '';
-    if (!in_array($kind, array('campaign-test', 'self-checkin-code'), true)) {
+    if (!in_array($kind, array('campaign-test', 'campaign', 'self-checkin-code'), true)) {
         return seating_studio_relay_error('invalid_payload', 'Invalid mail request.', 400);
     }
 
@@ -102,9 +102,14 @@ function seating_studio_relay_send(WP_REST_Request $request) {
         return $inline_assets;
     }
 
-    $valid_subject = $kind === 'campaign-test'
-        ? strpos($subject, '[TEST] ') === 0
-        : preg_match('/^Your check-in code: [0-9]{6}$/', $subject) === 1;
+    // Guest emails must never carry the test prefix, and test emails must always carry it.
+    if ($kind === 'campaign-test') {
+        $valid_subject = strpos($subject, '[TEST] ') === 0;
+    } elseif ($kind === 'campaign') {
+        $valid_subject = $subject !== '' && strpos($subject, '[TEST]') !== 0;
+    } else {
+        $valid_subject = preg_match('/^Your check-in code: [0-9]{6}$/', $subject) === 1;
+    }
     if (!is_email($to) || ($reply_to !== '' && !is_email($reply_to)) || !$valid_subject) {
         return seating_studio_relay_error('invalid_payload', 'Invalid mail request.', 400);
     }
@@ -113,14 +118,20 @@ function seating_studio_relay_send(WP_REST_Request $request) {
     }
 
     $headers = array('Content-Type: text/html; charset=UTF-8');
-    $headers[] = $kind === 'campaign-test' ? 'X-Seating-Studio-Campaign-Test: true' : 'X-Seating-Studio-Self-Check-In: verification';
+    if ($kind === 'campaign-test') {
+        $headers[] = 'X-Seating-Studio-Campaign-Test: true';
+    } elseif ($kind === 'campaign') {
+        $headers[] = 'X-Seating-Studio-Campaign: guest';
+    } else {
+        $headers[] = 'X-Seating-Studio-Self-Check-In: verification';
+    }
     if ($reply_to !== '') {
         $headers[] = 'Reply-To: ' . $reply_to;
     }
 
     $attachments = array();
     $calendar_path = '';
-    if ($calendar !== '' && $kind === 'campaign-test') {
+    if ($calendar !== '' && in_array($kind, array('campaign-test', 'campaign'), true)) {
         $temp_path = wp_tempnam('event');
         $calendar_path = $temp_path ? $temp_path . '.ics' : '';
         if ($temp_path && !rename($temp_path, $calendar_path)) {
