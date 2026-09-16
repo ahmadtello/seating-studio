@@ -34,6 +34,9 @@ Built for ticketed events sold through WordPress, Modern Events Calendar (MEC) a
 - **Drag and drop**, adding several guests at once, and moving or swapping guests between tables.
 - **Smart auto-seating** with a live preview before you apply it.
 - **Tables and rows**: capacities from 4 to 20, custom row lengths, table numbers and private admin labels.
+- **Arrange tables**: drag tables within and between rows, and add new empty tables to any row.
+- **Safe for teams**: every save carries the plan version it was based on. If someone else saved first, the save is refused and the tab offers **Reload latest plan** instead of overwriting their work. Open tabs with no unsaved edits pick up other people's changes automatically.
+- **Save history**: the server keeps the last 1000 versions of the plan in a `history/` folder next to the data file, so any save can be rolled back.
 
 </td>
 <td width="50%" valign="top">
@@ -243,6 +246,7 @@ npm test
 npm run test:auth
 npm run test:self-checkin
 node tests/guest-delete.integration.mjs
+node tests/save-conflict.integration.mjs
 node tests/ticket-qr.integration.mjs
 
 # Live ticket lookup against your WordPress site (skipped unless enabled)

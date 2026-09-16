@@ -804,7 +804,8 @@ button:focus-visible, input:focus-visible, select:focus-visible { outline: 3px s
 .planner-shell.no-inspector { grid-template-columns: 280px minmax(0, 1fr); }
 .zone-editor > small { display: block; margin-top: 6px; }
 .save-status { padding: 8px 24px; color: #53665c; font-size: 12px; display: flex; gap: 12px; align-items: center; }
-.save-status.error { background: #fff0ec; color: #9b3021; }
+.save-status.error, .save-status.conflict { background: #fff0ec; color: #9b3021; }
+.save-status.conflict { font-weight: 700; position: sticky; top: 0; z-index: 30; }
 .zone-filter, .membership-filter { display: flex; flex-direction: column; gap: 5px; font-size: 12px; }
 .zone-filter select, .membership-filter select, .zone-editor input, .zone-editor select { background: white; border: 1px solid #d5dedc; border-radius: 7px; padding: 9px 12px; color: #233c37; font: inherit; min-width: 0; }
 .zone-filter select { font-size: 14px; }

@@ -2,7 +2,7 @@ import express from 'express';
 import QRCode from 'qrcode';
 import { loadMecTickets } from './mec-tickets.js';
 import helmet from 'helmet';
-import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, readdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { createHmac, randomBytes, randomInt, timingSafeEqual } from 'node:crypto';
 import bcrypt from 'bcryptjs';
@@ -193,6 +193,20 @@ async function writeJsonAtomic(filePath, payload, mode = 0o640) {
 async function writeData(payload) {
   await writeJsonAtomic(dataFile, payload);
 }
+
+const historyDir = path.join(path.dirname(dataFile), 'history');
+const HISTORY_LIMIT = 1000;
+
+// Keeps a copy of the saved plan before each admin save so an overwrite can always be rolled back.
+async function snapshotData(revision) {
+  await mkdir(historyDir, { recursive: true, mode: 0o750 });
+  try { await copyFile(dataFile, path.join(historyDir, `workspaces-${new Date().toISOString().replace(/[:.]/g, '-')}-r${revision}.json`)); }
+  catch (error) { if (error.code !== 'ENOENT') throw error; return; }
+  const files = (await readdir(historyDir)).filter((name) => name.startsWith('workspaces-')).sort();
+  await Promise.all(files.slice(0, Math.max(0, files.length - HISTORY_LIMIT)).map((name) => unlink(path.join(historyDir, name)).catch(() => {})));
+}
+
+const dataRevision = (data) => Number.isInteger(data?.revision) && data.revision >= 0 ? data.revision : 0;
 
 async function readUsers() {
   try {
@@ -612,20 +626,30 @@ app.post('/api/auth/logout', requireSameOrigin, (req, res) => {
 });
 
 app.get('/api/health', (_req, res) => res.json({ ok: true }));
-app.get('/api/workspaces', requireAuth, requireAdmin, async (_req, res, next) => { try { res.json(await readData()); } catch (error) { next(error); } });
+app.get('/api/workspaces', requireAuth, requireAdmin, async (_req, res, next) => { try { const data = await readData(); res.json({ ...data, revision: dataRevision(data) }); } catch (error) { next(error); } });
+app.get('/api/workspaces/revision', requireAuth, requireAdmin, async (_req, res, next) => { try { res.json({ revision: dataRevision(await readData()) }); } catch (error) { next(error); } });
 app.put('/api/workspaces', requireAuth, requireAdmin, requireSameOrigin, async (req, res, next) => {
   try {
     const payload = normalizePayload(req.body);
-    await withDataMutation(async () => {
-      const next = preserveServerManagedState(payload, await readData());
+    const baseRevision = Number(req.get('X-Base-Revision'));
+    const result = await withDataMutation(async () => {
+      const current = await readData();
+      const currentRevision = dataRevision(current);
+      // A browser holding an older copy must reload instead of replacing newer work.
+      if (!Number.isInteger(baseRevision) || req.get('X-Base-Revision') == null || baseRevision !== currentRevision) return { conflict: true, revision: currentRevision };
+      const next = preserveServerManagedState(payload, current);
       for (const workspace of next.workspaces) {
         if (new Set(workspace.tables.map(t => t.id)).size !== workspace.tables.length) throw new Error('Invalid layout: duplicate table IDs');
         if (workspace.tables.some(t => !Number.isInteger(t.capacity) || workspace.guests.filter(g => g.tableId === t.id).length > t.capacity)) throw new Error('Invalid layout: a table exceeds its seat capacity');
         if (workspace.guests.some(g => g.tableId && !workspace.tables.some(t => t.id === g.tableId))) throw new Error('Invalid layout: an occupied table was removed');
       }
+      next.revision = currentRevision + 1;
+      await snapshotData(currentRevision);
       await writeData(next);
+      return { revision: next.revision };
     });
-    res.json({ saved: true, updatedAt: new Date().toISOString() });
+    if (result.conflict) return res.status(409).json({ error: 'This seating plan was changed by someone else. Reload to get the latest version before editing.', conflict: true, revision: result.revision });
+    res.json({ saved: true, revision: result.revision, updatedAt: new Date().toISOString() });
   }
   catch (error) { if (error.message.startsWith('Invalid')) return res.status(400).json({ error: error.message }); next(error); }
 });

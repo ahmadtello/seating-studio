@@ -73,7 +73,7 @@ try {
   const mutationHeaders = { Cookie: cookie, Origin: 'http://localhost:4173', 'X-Seating-Request': '1', 'Content-Type': 'application/json' };
   const save = await fetch(`${base}/api/workspaces`, {
     method: 'PUT',
-    headers: mutationHeaders,
+    headers: { ...mutationHeaders, 'X-Base-Revision': String((await fetch(`${base}/api/workspaces/revision`, { headers: { Cookie: cookie } }).then((response) => response.json())).revision) },
     body: JSON.stringify(seededPayload)
   });
   if (save.status !== 200) throw new Error(`Authenticated save returned ${save.status}`);
@@ -84,7 +84,7 @@ try {
   const overfull = structuredClone(seededPayload);
   overfull.workspaces[0].tables[0].capacity = 4;
   overfull.workspaces[0].guests = Array.from({ length: 5 }, (_, i) => ({ id: `overfull-${i}`, name: `Test ${i}`, tableId: 1 }));
-  const rejectedCapacity = await fetch(`${base}/api/workspaces`, { method: 'PUT', headers: mutationHeaders, body: JSON.stringify(overfull) });
+  const rejectedCapacity = await fetch(`${base}/api/workspaces`, { method: 'PUT', headers: { ...mutationHeaders, 'X-Base-Revision': String((await fetch(`${base}/api/workspaces/revision`, { headers: { Cookie: cookie } }).then((response) => response.json())).revision) }, body: JSON.stringify(overfull) });
   if (rejectedCapacity.status !== 400) throw new Error('API accepted an over-capacity layout');
   if (!savedHtml.includes('{{guest_name}}') || !savedHtml.includes('https://example.test/test.jpg') || /script|onclick/i.test(savedHtml)) throw new Error('Campaign HTML was not sanitized safely');
 
@@ -126,7 +126,7 @@ try {
   const legacyPayload = structuredClone(seededPayload);
   legacyPayload.workspaces[0].guests[0].bookingMembership = { status: 'active', levels: [{ name: 'Membership', active: true }], checkedAt: '2099-01-01T00:00:00Z' };
   legacyPayload.workspaces[0].guests[0].paymentStatus = 'Paid & confirmed';
-  const staleSave = await fetch(`${base}/api/workspaces`, { method: 'PUT', headers: mutationHeaders, body: JSON.stringify(legacyPayload) });
+  const staleSave = await fetch(`${base}/api/workspaces`, { method: 'PUT', headers: { ...mutationHeaders, 'X-Base-Revision': String((await fetch(`${base}/api/workspaces/revision`, { headers: { Cookie: cookie } }).then((response) => response.json())).revision) }, body: JSON.stringify(legacyPayload) });
   if (staleSave.status !== 200) throw new Error('Stale workspace save failed');
   const afterStaleSave = await fetch(`${base}/api/workspaces/qa-event/check-in`, { headers: { Cookie: cookie } }).then((response) => response.json());
   if (afterStaleSave.guests.some((guest) => !guest.checkedIn)) throw new Error('A stale workspace save overwrote check-in status');

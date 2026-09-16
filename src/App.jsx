@@ -1729,6 +1729,9 @@ function DashboardApp() {
   const [saveRetry, setSaveRetry] = useState(0);
   const saveQueue = useRef(Promise.resolve());
   const lastSaved = useRef('');
+  const serverRevision = useRef(0);
+  const pendingBody = useRef('');
+  const conflicted = useRef(false);
   const [importMessage, setImportMessage] = useState('');
   const fileRef = useRef(null);
   const workspace = workspaces.find((item) => item.id === currentWorkspaceId) || workspaces[0];
@@ -1764,8 +1767,9 @@ function DashboardApp() {
       .then((response) => response.ok ? response.json() : Promise.reject(new Error('No persistence API')))
       .then((data) => {
         if (authUser.role === 'admin' && Array.isArray(data.workspaces) && data.workspaces.length) {
-          setWorkspaces(data.workspaces.map((item) => ({ ...item, tables: normalizeTableNumbers(item.tables || []) })));
-          setCurrentWorkspaceId(data.currentWorkspaceId && data.workspaces.some((item) => item.id === data.currentWorkspaceId) ? data.currentWorkspaceId : data.workspaces[0].id);
+          applyServerData(data);
+          setDataReady(true);
+          return;
         }
         if (authUser.role === 'checkin' && Array.isArray(data.events) && data.events.length) {
           const eventWorkspaces = data.events.map((event) => ({ id: event.id, details: event.details, guests: [], tables: [], campaign: {}, published: false }));
@@ -1773,36 +1777,70 @@ function DashboardApp() {
           setCurrentWorkspaceId(data.currentWorkspaceId && eventWorkspaces.some((item) => item.id === data.currentWorkspaceId) ? data.currentWorkspaceId : eventWorkspaces[0].id);
           setView('checkin');
         }
-        if (authUser.role === 'admin' && data.profile) setProfile(data.profile);
-        lastSaved.current = JSON.stringify({ workspaces: data.workspaces, currentWorkspaceId: data.currentWorkspaceId, profile: data.profile });
         setDataReady(true);
       })
       .catch(() => setLoadError('Your event data could not be loaded. Editing is paused to protect your saved seating plan.'));
   }, [authStatus, authUser.role]);
 
+  // Mirrors exactly what the autosave sends, so freshly loaded data is never re-saved.
+  const applyServerData = (data) => {
+    const loaded = data.workspaces.map((item) => ({ ...item, tables: normalizeTableNumbers(item.tables || []) }));
+    const loadedId = data.currentWorkspaceId && loaded.some((item) => item.id === data.currentWorkspaceId) ? data.currentWorkspaceId : loaded[0].id;
+    const loadedProfile = data.profile || { name: 'Event Admin', role: 'Administrator' };
+    serverRevision.current = Number(data.revision) || 0;
+    lastSaved.current = JSON.stringify({ workspaces: loaded, currentWorkspaceId: loadedId, profile: loadedProfile });
+    pendingBody.current = lastSaved.current;
+    setWorkspaces(loaded);
+    setCurrentWorkspaceId(loadedId);
+    setProfile(loadedProfile);
+  };
+
+  // Picks up other admins' saves while this tab has nothing unsaved, so edits start from the latest plan.
+  useEffect(() => {
+    if (!dataReady || authStatus !== 'authenticated' || authUser.role !== 'admin') return;
+    let busy = false;
+    const refresh = async () => {
+      if (busy || conflicted.current || document.hidden || pendingBody.current !== lastSaved.current) return;
+      busy = true;
+      try {
+        const { revision } = await fetch('/api/workspaces/revision', { headers: { Accept: 'application/json' } }).then((response) => response.ok ? response.json() : {});
+        if (!Number.isInteger(revision) || revision <= serverRevision.current || pendingBody.current !== lastSaved.current) return;
+        const data = await fetch('/api/workspaces', { headers: { Accept: 'application/json' } }).then((response) => response.ok ? response.json() : null);
+        if (data && Array.isArray(data.workspaces) && data.workspaces.length && pendingBody.current === lastSaved.current) applyServerData(data);
+      } catch {} finally { busy = false; }
+    };
+    const timer = setInterval(refresh, 8000);
+    document.addEventListener('visibilitychange', refresh);
+    return () => { clearInterval(timer); document.removeEventListener('visibilitychange', refresh); };
+  }, [dataReady, authStatus, authUser.role]);
+
   useEffect(() => {
     if (!dataReady || authStatus !== 'authenticated' || authUser.role !== 'admin') return;
     const body = JSON.stringify({ workspaces, currentWorkspaceId, profile });
-    if (body === lastSaved.current) return;
+    pendingBody.current = body;
+    if (body === lastSaved.current || conflicted.current) return;
     let active = true;
     setSaveStatus('saving');
     const timer = setTimeout(() => {
       saveQueue.current = saveQueue.current.catch(() => {}).then(async () => {
       const response = await fetch('/api/workspaces', {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json', 'X-Seating-Request': '1' },
+        headers: { 'Content-Type': 'application/json', 'X-Seating-Request': '1', 'X-Base-Revision': String(serverRevision.current) },
         body
       });
+      if (response.status === 409) { conflicted.current = true; setSaveStatus('conflict'); return; }
       if (!response.ok) throw new Error('Save failed');
+      const result = await response.json().catch(() => ({}));
+      if (Number.isInteger(result.revision)) serverRevision.current = result.revision;
       lastSaved.current = body;
       if (active) setSaveStatus('saved');
-      }).catch(() => { if (active) setSaveStatus('error'); });
+      }).catch(() => { if (active && !conflicted.current) setSaveStatus('error'); });
     }, 500);
     return () => { active = false; clearTimeout(timer); };
   }, [workspaces, currentWorkspaceId, profile, dataReady, authStatus, authUser.role, saveRetry]);
 
   useEffect(() => {
-    if (saveStatus === 'saved') return;
+    if (saveStatus === 'saved' || saveStatus === 'conflict') return;
     const warn = e => { e.preventDefault(); e.returnValue = ''; };
     window.addEventListener('beforeunload', warn);
     return () => window.removeEventListener('beforeunload', warn);
@@ -1895,7 +1933,7 @@ function DashboardApp() {
       <div className="app-content">
         <Header view={view} onImport={handleImport} fileRef={fileRef} eventDetails={workspace.details} published={workspace.published} workspaces={workspaces} currentWorkspaceId={currentWorkspaceId} onWorkspace={(id) => { setCurrentWorkspaceId(id); setImportMessage(''); }} onManageEvents={() => setEventManagerOpen(true)} onPublish={() => { updateWorkspace({ published: true, publishedAt: new Date().toISOString() }); setImportMessage('Plan published and saved.'); }} />
         {importMessage && <div className="import-banner"><Checkmark24Regular />{importMessage}<button onClick={() => setImportMessage('')}><Dismiss20Regular /></button></div>}
-        {authUser.role === 'admin' && <div className={`save-status ${saveStatus}`} role="status">{saveStatus === 'saved' ? 'All changes saved' : saveStatus === 'saving' ? 'Saving changes…' : 'Changes not saved. Keep this page open.'}{saveStatus === 'error' && <button className="button secondary" onClick={() => setSaveRetry(n => n + 1)}>Retry save</button>}</div>}
+        {authUser.role === 'admin' && <div className={`save-status ${saveStatus}`} role="status">{saveStatus === 'saved' ? 'All changes saved' : saveStatus === 'saving' ? 'Saving changes…' : saveStatus === 'conflict' ? 'Someone else saved newer changes to this plan, so your last edit here was not saved. Reload to continue from the latest version.' : 'Changes not saved. Keep this page open.'}{saveStatus === 'conflict' && <button className="button primary" onClick={() => window.location.reload()}>Reload latest plan</button>}{saveStatus === 'error' && <button className="button secondary" onClick={() => setSaveRetry(n => n + 1)}>Retry save</button>}</div>}
         {view === 'seating' && <SeatingView key={workspace.id} guests={guests} setGuests={setGuests} tables={tables} setTables={setTables} fileRef={fileRef} details={workspace.details} onConfigure={updateWorkspace} />}
         {view === 'guests' && <GuestsView key={workspace.id} workspaceId={workspace.id} guests={guests} setGuests={setGuests} tables={tables} fileRef={fileRef} onSync={syncConfirmedBookings} syncState={syncState} canSync={Boolean(workspace.details.mecEventId)} />}
         {view === 'checkin' && <CheckInView workspaceId={workspace.id} eventDetails={workspace.details} onGoGuests={() => setView('guests')} />}

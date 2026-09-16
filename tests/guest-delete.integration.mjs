@@ -55,7 +55,7 @@ try {
   assert.deepEqual((await deleted.json()).deleted, { id: manualId, name: 'Walk In' });
   assert.ok(!(await readWorkspace()).guests.some((guest) => guest.id === manualId), 'guest removed from saved data');
 
-  const staleSave = await fetch(`${base}/api/workspaces`, { method: 'PUT', headers, body: JSON.stringify({ currentWorkspaceId: 'qa-event', workspaces: [staleSnapshot] }) });
+  const staleSave = await fetch(`${base}/api/workspaces`, { method: 'PUT', headers: { ...headers, 'X-Base-Revision': String((await fetch(`${base}/api/workspaces/revision`, { headers: { Cookie: cookie } }).then((response) => response.json())).revision) }, body: JSON.stringify({ currentWorkspaceId: 'qa-event', workspaces: [staleSnapshot] }) });
   assert.equal(staleSave.status, 200);
   const afterStaleSave = await readWorkspace();
   assert.ok(!afterStaleSave.guests.some((guest) => guest.id === manualId), 'a stale tab cannot resurrect a deleted manual guest');

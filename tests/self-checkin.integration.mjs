@@ -42,7 +42,7 @@ try {
     }], currentWorkspaceId: 'qa-event', profile: { name: 'QA Admin', role: 'Tester' }
   };
   const adminHeaders = { ...mutationHeaders, Cookie: cookie };
-  const save = await fetch(`${base}/api/workspaces`, { method: 'PUT', headers: adminHeaders, body: JSON.stringify(payload) });
+  const save = await fetch(`${base}/api/workspaces`, { method: 'PUT', headers: { ...adminHeaders, 'X-Base-Revision': String((await fetch(`${base}/api/workspaces/revision`, { headers: { Cookie: cookie } }).then((response) => response.json())).revision) }, body: JSON.stringify(payload) });
   if (save.status !== 200) throw new Error('Workspace seed failed');
 
   const publicEvent = await fetch(`${base}/api/public/self-check-in/qa-event`).then((response) => response.json());
@@ -62,7 +62,7 @@ try {
   if (JSON.stringify(arrivalData).includes('Sponsor Co')) throw new Error('Self check-in leaked the admin-only table name');
 
   payload.workspaces[0].details.selfCheckInVerification = true;
-  const enableVerification = await fetch(`${base}/api/workspaces`, { method: 'PUT', headers: adminHeaders, body: JSON.stringify(payload) });
+  const enableVerification = await fetch(`${base}/api/workspaces`, { method: 'PUT', headers: { ...adminHeaders, 'X-Base-Revision': String((await fetch(`${base}/api/workspaces/revision`, { headers: { Cookie: cookie } }).then((response) => response.json())).revision) }, body: JSON.stringify(payload) });
   if (enableVerification.status !== 200) throw new Error('Verification setting did not save');
   const challenge = await fetch(`${base}/api/public/self-check-in/qa-event/start`, { method: 'POST', headers: mutationHeaders, body: JSON.stringify({ email: 'family@example.test' }) });
   const challengeData = await challenge.json();
@@ -74,7 +74,7 @@ try {
   if (verified.status !== 200 || !verifiedData.verified || verifiedData.guests.length !== 2) throw new Error('Valid verification code failed');
 
   payload.workspaces[0].details.selfCheckInEnabled = false;
-  const disable = await fetch(`${base}/api/workspaces`, { method: 'PUT', headers: adminHeaders, body: JSON.stringify(payload) });
+  const disable = await fetch(`${base}/api/workspaces`, { method: 'PUT', headers: { ...adminHeaders, 'X-Base-Revision': String((await fetch(`${base}/api/workspaces/revision`, { headers: { Cookie: cookie } }).then((response) => response.json())).revision) }, body: JSON.stringify(payload) });
   if (disable.status !== 200) throw new Error('Self check-in disable setting did not save');
   const closed = await fetch(`${base}/api/public/self-check-in/qa-event`);
   if (closed.status !== 404) throw new Error('Disabled self check-in remained public');
