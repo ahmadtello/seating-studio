@@ -1,0 +1,39 @@
+{
+  "name": "seating-studio",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "scripts": {
+    "dev": "vite --host 0.0.0.0",
+    "api": "node server/index.js",
+    "build": "vite build",
+    "test:auth": "node tests/auth.integration.mjs",
+    "test:self-checkin": "node tests/self-checkin.integration.mjs",
+    "test:load": "node tests/load-self-checkin.mjs",
+    "preview": "vite preview --host 0.0.0.0",
+    "start": "NODE_ENV=production node server/index.js",
+    "test": "node --test tests/*.test.mjs"
+  },
+  "dependencies": {
+    "@fluentui/react-components": "^9.72.5",
+    "@fluentui/react-icons": "^2.0.323",
+    "@zxing/browser": "^0.2.1",
+    "bcryptjs": "^3.0.2",
+    "exceljs": "^4.4.0",
+    "express": "^5.1.0",
+    "helmet": "^8.1.0",
+    "jsqr": "^1.4.0",
+    "nodemailer": "^10.0.0",
+    "qrcode": "^1.5.4",
+    "react": "^19.1.1",
+    "react-dom": "^19.1.1",
+    "sanitize-html": "^2.17.7"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^5.0.2",
+    "vite": "^7.1.4"
+  }
+}

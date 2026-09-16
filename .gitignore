@@ -1,0 +1,33 @@
+# Dependencies and builds
+node_modules/
+dist/
+dist-*/
+*.tar.gz
+
+# Secrets, credentials and local environment
+.env
+.env.*
+.auth*
+*.htpasswd
+.private/
+
+# Live or personal data (guest lists, users, game databases)
+data/*
+!data/.gitkeep
+*.sqlite
+*.sqlite-*
+users.json
+
+# Generated test evidence, browser snapshots and local tool state
+output/
+.playwright-cli/
+.claude/
+.impeccable/
+*.log
+
+# OS clutter
+.DS_Store
+Thumbs.db
+
+# Internal security review notes
+security_best_practices_report.md

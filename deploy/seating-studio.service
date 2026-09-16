@@ -1,0 +1,38 @@
+[Unit]
+Description=Seating Studio API
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=seating-studio
+Group=seating-studio
+WorkingDirectory=/opt/seating-studio
+EnvironmentFile=/etc/seating-studio.env
+ExecStart=/usr/bin/node server/index.js
+Restart=on-failure
+RestartSec=3
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ProtectKernelLogs=true
+ProtectHostname=true
+LockPersonality=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+ReadWritePaths=/var/lib/seating-studio
+RestrictAddressFamilies=AF_INET AF_INET6
+LimitNOFILE=65536
+TasksMax=2048
+MemoryMax=1G
+
+[Install]
+WantedBy=multi-user.target
